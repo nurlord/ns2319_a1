@@ -1,188 +1,361 @@
+#ifndef BUFFER_OFFSET
+#define BUFFER_OFFSET(offset) ((GLvoid *)(offset))
+#endif
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <cmath>
-#include <vector>
+#include <string>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 
-std::string loadShaderSource(const char *filepath) {
-  std::ifstream file(filepath);
-  std::stringstream buffer;
-  buffer << file.rdbuf();
-  return buffer.str();
-}
+const glm::vec3 WHITE(1.0, 1.0, 1.0);
+const glm::vec3 BLACK(0.0, 0.0, 0.0);
+const glm::vec3 RED(1.0, 0.0, 0.0);
+const glm::vec3 GREEN(0.0, 1.0, 0.0);
+const glm::vec3 BLUE(0.0, 0.0, 1.0);
+const int CIRCLE_NUM_POINTS = 100;
+const int ELLIPSE_NUM_POINTS = 100;
+const int TRIANGLE_NUM_POINTS = 3;
+const int SQUARE_NUM = 6;
+const int SQUARE_NUM_POINTS = 4 * SQUARE_NUM;
+const int LINE_NUM_POINTS = 2;
 
-GLuint createShader(const char *path, GLenum type) {
-  std::string src = loadShaderSource(path);
-  const char *src_c = src.c_str();
-  GLuint shader = glCreateShader(type);
-  glShaderSource(shader, 1, &src_c, nullptr);
-  glCompileShader(shader);
-  int success;
-  glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetShaderInfoLog(shader, 512, NULL, infoLog);
-    std::cerr << "Shader compile error: " << infoLog << std::endl;
+std::string readFile(const char *filename) {
+  std::ifstream in(filename);
+  if (!in) {
+    std::cerr << "Cannot open " << filename << std::endl;
+    exit(EXIT_FAILURE);
   }
-  return shader;
+  std::stringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
 }
 
-GLuint createProgram(const char *vShader, const char *fShader) {
-  GLuint vertex = createShader(vShader, GL_VERTEX_SHADER);
-  GLuint fragment = createShader(fShader, GL_FRAGMENT_SHADER);
+GLuint InitShader(const char *vShaderFile, const char *fShaderFile) {
+  std::string vsrc = readFile(vShaderFile);
+  std::string fsrc = readFile(fShaderFile);
+
+  const char *vShaderSrc = vsrc.c_str();
+  const char *fShaderSrc = fsrc.c_str();
+
+  GLuint vShader = glCreateShader(GL_VERTEX_SHADER);
+  glShaderSource(vShader, 1, &vShaderSrc, NULL);
+  glCompileShader(vShader);
+
+  GLint compiled;
+  glGetShaderiv(vShader, GL_COMPILE_STATUS, &compiled);
+  if (!compiled) {
+    char log[1024];
+    glGetShaderInfoLog(vShader, 1024, NULL, log);
+    std::cerr << "Vertex shader compile error:\n" << log << std::endl;
+  }
+
+  GLuint fShader = glCreateShader(GL_FRAGMENT_SHADER);
+  glShaderSource(fShader, 1, &fShaderSrc, NULL);
+  glCompileShader(fShader);
+
+  glGetShaderiv(fShader, GL_COMPILE_STATUS, &compiled);
+  if (!compiled) {
+    char log[1024];
+    glGetShaderInfoLog(fShader, 1024, NULL, log);
+    std::cerr << "Fragment shader compile error:\n" << log << std::endl;
+  }
+
   GLuint program = glCreateProgram();
-  glAttachShader(program, vertex);
-  glAttachShader(program, fragment);
+  glAttachShader(program, vShader);
+  glAttachShader(program, fShader);
   glLinkProgram(program);
-  int success;
-  glGetProgramiv(program, GL_LINK_STATUS, &success);
-  if (!success) {
-    char infoLog[512];
-    glGetProgramInfoLog(program, 512, NULL, infoLog);
-    std::cerr << "Program link error: " << infoLog << std::endl;
+
+  GLint linked;
+  glGetProgramiv(program, GL_LINK_STATUS, &linked);
+  if (!linked) {
+    char log[1024];
+    glGetProgramInfoLog(program, 1024, NULL, log);
+    std::cerr << "Shader program link error:\n" << log << std::endl;
   }
-  glDeleteShader(vertex);
-  glDeleteShader(fragment);
+
+  glDeleteShader(vShader);
+  glDeleteShader(fShader);
   return program;
 }
 
-// Utility: create VAO for vertices
-GLuint createVAO(const std::vector<float> &vertices) {
-  GLuint VAO, VBO;
-  glGenVertexArrays(1, &VAO);
-  glGenBuffers(1, &VBO);
-
-  glBindVertexArray(VAO);
-  glBindBuffer(GL_ARRAY_BUFFER, VBO);
-  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float),
-               vertices.data(), GL_STATIC_DRAW);
-
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
-  glEnableVertexAttribArray(0);
-
-  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float),
-                        (void *)(2 * sizeof(float)));
-  glEnableVertexAttribArray(1);
-
-  glBindVertexArray(0);
-  return VAO;
+void framebuffer_size_callback(GLFWwindow *window, int width, int height) {
+  glViewport(0, 0, width, height);
 }
 
-int main() {
+float generateAngleColor(double angle) { return 1.0 / (2 * M_PI) * angle; }
+
+double getTriangleAngle(int point) { return 2 * M_PI / 3 * point; }
+
+double getSquareAngle(int point) { return M_PI / 4 + (M_PI / 2 * point); }
+
+glm::vec2 getEllipseVertex(glm::vec2 center, double scale, double verticalScale,
+                           double angle) {
+  glm::vec2 vertex(sin(angle), cos(angle));
+  vertex *= scale;
+  vertex.y *= verticalScale;
+  vertex += center;
+  return vertex;
+}
+
+void generateEllipsePoints(glm::vec2 vertices[], glm::vec3 colors[],
+                           int startVertexIndex, int numPoints,
+                           glm::vec2 center, double scale,
+                           double verticalScale) {
+  double angleIncrement = (2 * M_PI) / numPoints;
+  double currentAngle = M_PI / 2;
+
+  for (int i = startVertexIndex; i < startVertexIndex + numPoints; ++i) {
+    vertices[i] = getEllipseVertex(center, scale, verticalScale, currentAngle);
+    if (verticalScale == 1.0) {
+      colors[i] = glm::vec3(generateAngleColor(currentAngle), 0.0, 0.0);
+    } else {
+      colors[i] = RED;
+    }
+    currentAngle += angleIncrement;
+  }
+}
+
+void generateTrianglePoints(glm::vec2 vertices[], glm::vec3 colors[],
+                            int startVertexIndex) {
+  glm::vec2 scale(0.25, 0.25);
+  glm::vec2 center(0.0, 0.70);
+
+  for (int i = 0; i < 3; ++i) {
+    double currentAngle = getTriangleAngle(i);
+    vertices[startVertexIndex + i] =
+        glm::vec2(sin(currentAngle), cos(currentAngle)) * scale + center;
+  }
+
+  colors[startVertexIndex] = RED;
+  colors[startVertexIndex + 1] = GREEN;
+  colors[startVertexIndex + 2] = BLUE;
+}
+
+void generateSquarePoints(glm::vec2 vertices[], glm::vec3 colors[],
+                          int squareNumber, int startVertexIndex) {
+  glm::vec2 scale(0.90, 0.90);
+  double scaleDecrease = 0.15;
+  glm::vec2 center(0.0, -0.25);
+  int vertexIndex = startVertexIndex;
+
+  for (int i = 0; i < squareNumber; ++i) {
+    glm::vec3 currentColor;
+    currentColor = (i % 2) ? BLACK : WHITE;
+    for (int j = 0; j < 4; ++j) {
+      double currentAngle = getSquareAngle(j);
+      vertices[vertexIndex] =
+          glm::vec2(sin(currentAngle), cos(currentAngle)) * scale + center;
+      colors[vertexIndex] = currentColor;
+      vertexIndex++;
+    }
+    scale -= scaleDecrease;
+  }
+}
+
+void generateLinePoints(glm::vec2 vertices[], glm::vec3 colors[],
+                        int startVertexIndex) {
+  vertices[startVertexIndex] = glm::vec2(-1.0, -1.0);
+  vertices[startVertexIndex + 1] = glm::vec2(1.0, 1.0);
+
+  colors[startVertexIndex] = WHITE;
+  colors[startVertexIndex + 1] = BLUE;
+}
+
+GLuint vao[5], program;
+
+void init() {
+  glm::vec2 triangle_vertices[TRIANGLE_NUM_POINTS];
+  glm::vec3 triangle_colors[TRIANGLE_NUM_POINTS];
+
+  glm::vec2 square_vertices[SQUARE_NUM_POINTS];
+  glm::vec3 square_colors[SQUARE_NUM_POINTS];
+
+  glm::vec2 circle_vertices[CIRCLE_NUM_POINTS];
+  glm::vec3 circle_colors[CIRCLE_NUM_POINTS];
+
+  glm::vec2 ellipse_vertices[ELLIPSE_NUM_POINTS];
+  glm::vec3 ellipse_colors[ELLIPSE_NUM_POINTS];
+
+  generateTrianglePoints(triangle_vertices, triangle_colors, 0);
+  generateSquarePoints(square_vertices, square_colors, SQUARE_NUM, 0);
+
+  glm::vec2 circle_center(0.65, 0.70);
+  generateEllipsePoints(circle_vertices, circle_colors, 0, CIRCLE_NUM_POINTS,
+                        circle_center, 0.25, 1.0);
+
+  glm::vec2 ellipse_center(-0.65, 0.70);
+  generateEllipsePoints(ellipse_vertices, ellipse_colors, 0, ELLIPSE_NUM_POINTS,
+                        ellipse_center, 0.25, 0.50);
+
+  std::string vshader, fshader;
+  vshader = "shaders/vertex_shader_task2.glsl";
+  fshader = "shaders/fragment_shader.glsl";
+  program = InitShader(vshader.c_str(), fshader.c_str());
+  glUseProgram(program);
+
+  GLuint vbo[2];
+
+  glGenVertexArrays(1, &vao[0]);
+  glBindVertexArray(vao[0]);
+
+  glGenBuffers(1, &vbo[0]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(triangle_vertices), triangle_vertices,
+               GL_STATIC_DRAW);
+  GLuint location = glGetAttribLocation(program, "vPosition");
+  glEnableVertexAttribArray(location);
+  glVertexAttribPointer(location, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2),
+                        BUFFER_OFFSET(0));
+
+  glGenBuffers(1, &vbo[1]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(triangle_colors), triangle_colors,
+               GL_STATIC_DRAW);
+  GLuint cLocation = glGetAttribLocation(program, "vColor");
+  glEnableVertexAttribArray(cLocation);
+  glVertexAttribPointer(cLocation, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3),
+                        BUFFER_OFFSET(0));
+
+  glGenVertexArrays(1, &vao[1]);
+  glBindVertexArray(vao[1]);
+
+  glGenBuffers(1, &vbo[0]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(square_vertices), square_vertices,
+               GL_STATIC_DRAW);
+  location = glGetAttribLocation(program, "vPosition");
+  glEnableVertexAttribArray(location);
+  glVertexAttribPointer(location, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2),
+                        BUFFER_OFFSET(0));
+
+  glGenBuffers(1, &vbo[1]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(square_colors), square_colors,
+               GL_STATIC_DRAW);
+  cLocation = glGetAttribLocation(program, "vColor");
+  glEnableVertexAttribArray(cLocation);
+  glVertexAttribPointer(cLocation, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3),
+                        BUFFER_OFFSET(0));
+
+  glGenVertexArrays(1, &vao[3]);
+
+  glBindVertexArray(vao[3]);
+
+  glGenBuffers(1, &vbo[0]);
+
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(circle_vertices), circle_vertices,
+               GL_STATIC_DRAW);
+  location = glGetAttribLocation(program, "vPosition");
+
+  glEnableVertexAttribArray(location);
+
+  glVertexAttribPointer(location, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2),
+                        BUFFER_OFFSET(0));
+
+  glGenBuffers(1, &vbo[1]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(circle_colors), circle_colors,
+               GL_STATIC_DRAW);
+  cLocation = glGetAttribLocation(program, "vColor");
+  glEnableVertexAttribArray(cLocation);
+  glVertexAttribPointer(cLocation, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3),
+                        BUFFER_OFFSET(0));
+
+  glGenVertexArrays(1, &vao[4]);
+  glBindVertexArray(vao[4]);
+
+  glGenBuffers(1, &vbo[0]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(ellipse_vertices), ellipse_vertices,
+               GL_STATIC_DRAW);
+  location = glGetAttribLocation(program, "vPosition");
+  glEnableVertexAttribArray(location);
+  glVertexAttribPointer(location, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2),
+                        BUFFER_OFFSET(0));
+
+  glGenBuffers(1, &vbo[1]);
+  glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(ellipse_colors), ellipse_colors,
+               GL_STATIC_DRAW);
+  cLocation = glGetAttribLocation(program, "vColor");
+  glEnableVertexAttribArray(cLocation);
+  glVertexAttribPointer(cLocation, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3),
+                        BUFFER_OFFSET(0));
+
+  glClearColor(0.0, 0.0, 0.0, 1.0);
+}
+
+void display(void) {
+
+  glClear(GL_COLOR_BUFFER_BIT);
+
+  glUseProgram(program);
+
+  glBindVertexArray(vao[0]);
+  glDrawArrays(GL_TRIANGLES, 0, TRIANGLE_NUM_POINTS);
+
+  glBindVertexArray(vao[1]);
+  for (int i = 0; i < SQUARE_NUM; ++i) {
+    glDrawArrays(GL_TRIANGLE_FAN, (i * 4), 4);
+  }
+
+  glBindVertexArray(vao[2]);
+  glDrawArrays(GL_LINES, 0, LINE_NUM_POINTS);
+
+  glBindVertexArray(vao[3]);
+
+  glDrawArrays(GL_TRIANGLE_FAN, 0, CIRCLE_NUM_POINTS);
+
+  glBindVertexArray(vao[4]);
+  glDrawArrays(GL_TRIANGLE_FAN, 0, ELLIPSE_NUM_POINTS);
+
+  glFlush();
+}
+
+int main(int argc, char **argv) {
   glfwInit();
+
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-  GLFWwindow *window = glfwCreateWindow(500, 500, "Task 2 Shapes", NULL, NULL);
-  if (!window) {
-    std::cerr << "Failed to create window\n";
+#ifdef __APPLE__
+  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+  GLFWwindow *window = glfwCreateWindow(500, 500, "task2", NULL, NULL);
+
+  if (window == NULL) {
+    std::cout << "Failed to create GLFW window" << std::endl;
+
     glfwTerminate();
     return -1;
   }
   glfwMakeContextCurrent(window);
+
+  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
   if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-    std::cerr << "Failed to init GLAD\n";
+    std::cout << "Failed to initialize GLAD" << std::endl;
     return -1;
   }
 
-  GLuint program = createProgram("shaders/vertex_shader.glsl",
-                                 "shaders/fragment_shader.glsl");
-  glUseProgram(program);
+  init();
 
-  // --- Circle (GL_TRIANGLE_FAN) ---
-  std::vector<float> circle;
-  circle.push_back(0.0f);
-  circle.push_back(0.0f); // center
-  circle.push_back(0.0f);
-  circle.push_back(0.0f);
-  circle.push_back(0.0f);
-  int segments = 100;
-  for (int i = 0; i <= segments; i++) {
-    float angle = i * 2.0f * M_PI / segments;
-    float x = 0.3f * cos(angle) - 0.5f;
-    float y = 0.3f * sin(angle) + 0.5f;
-    float r = (cos(angle) + 1.0f) / 2.0f; // vary red
-    circle.push_back(x);
-    circle.push_back(y);
-    circle.push_back(r);
-    circle.push_back(0.0f);
-    circle.push_back(1.0f - r);
-  }
-  // GLuint circleVAO = createVAO(circle);
-  // int circleVertices = (segments + 2);
-
-  // --- Ellipse ---
-  std::vector<float> ellipse;
-  ellipse.push_back(0.0f);
-  ellipse.push_back(0.0f);
-  ellipse.push_back(0.0f);
-  ellipse.push_back(0.0f);
-  ellipse.push_back(0.0f);
-  for (int i = 0; i <= segments; i++) {
-    float angle = i * 2.0f * M_PI / segments;
-    float x = 0.3f * cos(angle) + 0.5f;
-    float y = 0.18f * sin(angle) - 0.5f; // y scaled to 60%
-    ellipse.push_back(x);
-    ellipse.push_back(y);
-    ellipse.push_back(0.0f);
-    ellipse.push_back((sin(angle) + 1.0f) / 2.0f);
-    ellipse.push_back(1.0f);
-  }
-  // GLuint ellipseVAO = createVAO(ellipse);
-  // int ellipseVertices = (segments + 2);
-
-  // --- Squares (nested, gradient) ---
-  std::vector<float> squares;
-  int numSquares = 5;
-  for (int s = 0; s < numSquares; s++) {
-    float scale = 0.4f - s * 0.03f;
-    float shade = (float)s / numSquares;
-    std::vector<std::pair<float, float>> points = {
-        {scale, scale}, {-scale, scale}, {-scale, -scale}, {scale, -scale}};
-    for (auto &p : points) {
-      squares.push_back(p.first);
-      squares.push_back(p.second);
-      squares.push_back(shade);
-      squares.push_back(shade);
-      squares.push_back(shade);
-    }
-  }
-  GLuint squaresVAO = createVAO(squares);
-  // int squaresVertices = numSquares * 4;
-
-  std::vector<float> triangle = {0.0f,  -0.2f, 1.0f, 0.0f, 0.0f,
-                                 -0.3f, -0.7f, 0.0f, 1.0f, 0.0f,
-                                 0.3f,  -0.7f, 0.0f, 0.0f, 1.0f};
-  GLuint triVAO = createVAO(triangle);
+  std::cout << "OpenGL Vendor: " << glGetString(GL_VENDOR) << std::endl;
+  std::cout << "OpenGL Renderer: " << glGetString(GL_RENDERER) << std::endl;
+  std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
+  std::cout << "Supported GLSL version is: "
+            << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
 
   while (!glfwWindowShouldClose(window)) {
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // // Circle
-    // glBindVertexArray(circleVAO);
-    // glDrawArrays(GL_TRIANGLE_FAN, 0, circleVertices);
-
-    // // Ellipse
-    // glBindVertexArray(ellipseVAO);
-    // glDrawArrays(GL_TRIANGLE_FAN, 0, ellipseVertices);
-
-    // Squares
-    glBindVertexArray(squaresVAO);
-    for (int s = 0; s < numSquares; s++) {
-      glDrawArrays(GL_LINE_LOOP, s * 4, 5);
-    }
-
-    // Triangle
-    glBindVertexArray(triVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-
+    display();
     glfwSwapBuffers(window);
     glfwPollEvents();
   }
-
-  glfwTerminate();
   return 0;
 }
