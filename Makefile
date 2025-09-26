@@ -1,7 +1,7 @@
 CXX = g++
 CXXFLAGS = -Iinclude -Wall -g
 
-LDFLAGS = -lglfw3 -lGL -lX11 -lpthread -lXrandr -lXi -ldl
+LDFLAGS = -lglfw -lGL -lX11 -lpthread -lXrandr -lXi -ldl
 
 PROGRAMS = red_triangle blue_square task2
 
